@@ -1,0 +1,416 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notebook Canvas Drawing Tool</title>
+    <link rel="stylesheet" type="text/css" href="{% static 'notebook/style.css' %}">
+    
+</head>
+<body>
+    {% csrf_token %}
+    <h2>Notebook Drawing Canvas</h2>
+    <div class="toolbar">
+        <button id="pen-tool" class="tool-btn active">Pen</button>
+        <button id="eraser-tool" class="tool-btn">Eraser</button>
+        <button id="clear-btn" class="tool-btn">Clear All</button>
+        <button id="download-btn" class="tool-btn">Download</button>
+        <button id="undo-btn" class="tool-btn">Undo</button>
+        <button id="convert-btn" class="tool-btn">Convert</button>
+        <button id="extract-text-btn" class="tool-btn" disabled>Extract Text</button>
+        
+        <div class="tool-options">
+            <label>
+                Color:
+                <input type="color" id="pen-color" value="#000000">
+            </label>
+            <label>
+                Size:
+                <input type="range" id="pen-size" min="1" max="20" value="2">
+                <span id="size-display">2px</span>
+            </label>
+        </div>
+    </div>
+    
+    <div class="canvas-container">
+        <canvas id="background-canvas"></canvas>
+        <canvas id="drawing-canvas"></canvas>
+    </div>
+    
+    <div class="status-bar">
+        <span id="tool-status">Current tool: Pen</span>
+        <span> | Press Ctrl+Z for undo</span>
+        <span id="convert-status"></span>
+    </div>
+
+    <script>
+// Canvas setup
+const drawingCanvas = document.getElementById('drawing-canvas');
+const backgroundCanvas = document.getElementById('background-canvas');
+const drawingCtx = drawingCanvas.getContext('2d');
+const bgCtx = backgroundCanvas.getContext('2d');
+
+// Set canvas dimensions (A4 size at 72 DPI)
+const canvasWidth = 595;
+const canvasHeight = 842;
+drawingCanvas.width = canvasWidth;
+drawingCanvas.height = canvasHeight;
+backgroundCanvas.width = canvasWidth;
+backgroundCanvas.height = canvasHeight;
+
+// Tool elements
+const penTool = document.getElementById('pen-tool');
+const eraserTool = document.getElementById('eraser-tool');
+const clearBtn = document.getElementById('clear-btn');
+const downloadBtn = document.getElementById('download-btn');
+const undoBtn = document.getElementById('undo-btn');
+const convertBtn = document.getElementById('convert-btn');
+const extractTextBtn = document.getElementById('extract-text-btn');
+const penColor = document.getElementById('pen-color');
+const penSize = document.getElementById('pen-size');
+const sizeDisplay = document.getElementById('size-display');
+const toolStatus = document.getElementById('tool-status');
+const convertStatus = document.getElementById('convert-status');
+
+// Drawing state
+let isDrawing = false;
+let currentTool = 'pen';
+let lastX = 0;
+let lastY = 0;
+let drawingHistory = [];
+let currentStep = -1;
+const lineSpacing = 25; // Same as used in setupNotebookBackground
+let lastConversionData = null; // Store conversion data for text extraction
+
+// Initial setup
+setupNotebookBackground();
+saveDrawingState(); // Save the initial blank state
+
+// Draw notebook lines background
+function setupNotebookBackground() {
+    bgCtx.fillStyle = 'white';
+    bgCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Draw horizontal lines
+    bgCtx.strokeStyle = '#a0c0e8';
+    bgCtx.lineWidth = 1;
+    
+    // Draw horizontal lines
+    for (let y = lineSpacing; y < canvasHeight; y += lineSpacing) {
+        bgCtx.beginPath();
+        bgCtx.moveTo(0, y);
+        bgCtx.lineTo(canvasWidth, y);
+        bgCtx.stroke();
+    }
+    
+    // Draw vertical line (like a margin)
+    bgCtx.strokeStyle = '#ff9999';
+    bgCtx.beginPath();
+    bgCtx.moveTo(50, 0);
+    bgCtx.lineTo(50, canvasHeight);
+    bgCtx.stroke();
+}
+
+// Event listeners for drawing
+drawingCanvas.addEventListener('mousedown', startDrawing);
+drawingCanvas.addEventListener('mousemove', draw);
+drawingCanvas.addEventListener('mouseup', stopDrawing);
+drawingCanvas.addEventListener('mouseout', stopDrawing);
+
+// Tool selection
+penTool.addEventListener('click', () => {
+    setActiveTool('pen');
+});
+
+eraserTool.addEventListener('click', () => {
+    setActiveTool('eraser');
+});
+
+clearBtn.addEventListener('click', clearCanvas);
+downloadBtn.addEventListener('click', downloadCanvas);
+undoBtn.addEventListener('click', undoLastAction);
+convertBtn.addEventListener('click', convertLinesToImages);
+extractTextBtn.addEventListener('click', extractTextFromLines);
+
+// Tool options
+penSize.addEventListener('input', () => {
+    sizeDisplay.textContent = `${penSize.value}px`;
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undoLastAction();
+    }
+});
+
+// Drawing functions
+function startDrawing(e) {
+    isDrawing = true;
+    [lastX, lastY] = getMousePos(drawingCanvas, e);
+    
+    // Start a new path
+    drawingCtx.beginPath();
+    drawingCtx.moveTo(lastX, lastY);
+    drawingCtx.lineTo(lastX, lastY);
+    drawingCtx.stroke();
+}
+
+function draw(e) {
+    if (!isDrawing) return;
+    
+    const [currentX, currentY] = getMousePos(drawingCanvas, e);
+    
+    drawingCtx.beginPath();
+    drawingCtx.moveTo(lastX, lastY);
+    drawingCtx.lineTo(currentX, currentY);
+    
+    if (currentTool === 'pen') {
+        drawingCtx.strokeStyle = penColor.value;
+        drawingCtx.lineWidth = parseInt(penSize.value);
+        drawingCtx.lineCap = 'round';
+        drawingCtx.lineJoin = 'round';
+    } else if (currentTool === 'eraser') {
+        drawingCtx.strokeStyle = 'white';
+        drawingCtx.lineWidth = parseInt(penSize.value) * 2;
+        drawingCtx.lineCap = 'round';
+        drawingCtx.lineJoin = 'round';
+    }
+    
+    drawingCtx.stroke();
+    
+    lastX = currentX;
+    lastY = currentY;
+}
+
+function stopDrawing() {
+    if (isDrawing) {
+        isDrawing = false;
+        saveDrawingState();
+    }
+}
+
+function getMousePos(canvas, evt) {
+    const rect = canvas.getBoundingClientRect();
+    return [
+        evt.clientX - rect.left,
+        evt.clientY - rect.top
+    ];
+}
+
+function setActiveTool(tool) {
+    currentTool = tool;
+    
+    // Update UI
+    penTool.classList.toggle('active', tool === 'pen');
+    eraserTool.classList.toggle('active', tool === 'eraser');
+    
+    toolStatus.textContent = `Current tool: ${tool.charAt(0).toUpperCase() + tool.slice(1)}`;
+}
+
+function clearCanvas() {
+    drawingCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    saveDrawingState();
+}
+
+function downloadCanvas() {
+    // Create a temporary canvas to combine both layers
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvasWidth;
+    tempCanvas.height = canvasHeight;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // Draw background layer
+    tempCtx.drawImage(backgroundCanvas, 0, 0);
+    
+    // Draw the drawing layer
+    tempCtx.drawImage(drawingCanvas, 0, 0);
+    
+    // Create download link
+    const link = document.createElement('a');
+    link.download = 'notebook-drawing.png';
+    link.href = tempCanvas.toDataURL('image/png');
+    link.click();
+}
+
+function saveDrawingState() {
+    // If we're not at the end of the history, remove everything after current step
+    if (currentStep < drawingHistory.length - 1) {
+        drawingHistory = drawingHistory.slice(0, currentStep + 1);
+    }
+    
+    // Save current state
+    drawingHistory.push(drawingCtx.getImageData(0, 0, canvasWidth, canvasHeight));
+    currentStep = drawingHistory.length - 1;
+}
+
+function undoLastAction() {
+    if (currentStep > 0) {
+        currentStep--;
+        drawingCtx.putImageData(drawingHistory[currentStep], 0, 0);
+    } else if (currentStep === 0) {
+        // Clear to initial state
+        drawingCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    }
+}
+
+// New function to convert lines to individual images
+async function convertLinesToImages() {
+    convertStatus.textContent = " | Converting...";
+    convertBtn.disabled = true;
+
+    try {
+        const numberOfLines = Math.floor(canvasHeight / lineSpacing);
+        const targetHeight = 100; // ✅ your desired fixed height
+
+        const images = [];
+
+        for (let i = 0; i < numberOfLines; i++) {
+            const yStart = i * lineSpacing;
+
+            // Step 1: Extract only the drawing layer (skip background)
+            const lineCanvas = document.createElement('canvas');
+            lineCanvas.width = canvasWidth;
+            lineCanvas.height = lineSpacing;
+
+            const lineCtx = lineCanvas.getContext('2d');
+
+            // White background to avoid transparency
+            lineCtx.fillStyle = 'white';
+            lineCtx.fillRect(0, 0, canvasWidth, lineSpacing);
+
+            // Copy from drawing layer only
+            const lineImageData = drawingCtx.getImageData(0, yStart, canvasWidth, lineSpacing);
+            lineCtx.putImageData(lineImageData, 0, 0);
+
+            // Step 2: Resize to fixed height = 100 while keeping aspect ratio
+            const aspectRatio = canvasWidth / lineSpacing;
+            const targetWidth = Math.round(targetHeight * aspectRatio);
+
+            const scaledCanvas = document.createElement('canvas');
+            scaledCanvas.width = targetWidth;
+            scaledCanvas.height = targetHeight;
+            const scaledCtx = scaledCanvas.getContext('2d');
+
+            scaledCtx.fillStyle = 'white';
+            scaledCtx.fillRect(0, 0, targetWidth, targetHeight);
+
+            scaledCtx.drawImage(lineCanvas, 0, 0, targetWidth, targetHeight);
+
+            // Step 3: Convert to PNG DataURL
+            const dataURL = scaledCanvas.toDataURL('image/png');
+
+            images.push({
+                lineNumber: i + 1,
+                dataURL: dataURL
+            });
+        }
+
+        // ✅ Send to backend
+        const result = await saveLinesToServer(images);
+
+        lastConversionData = {
+            session_id: result.session_id,
+            timestamp: result.timestamp
+        };
+
+        extractTextBtn.disabled = false;
+        convertStatus.textContent = ` | Converted ${numberOfLines} lines successfully!`;
+    } catch (error) {
+        console.error('Error converting lines:', error);
+        convertStatus.textContent = " | Conversion failed!";
+    } finally {
+        convertBtn.disabled = false;
+        setTimeout(() => {
+            convertStatus.textContent = "";
+        }, 3000);
+    }
+}
+
+
+// Function to send images to Django backend
+async function saveLinesToServer(images) {
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                     document.querySelector('meta[name=csrf-token]')?.getAttribute('content');
+    
+    const response = await fetch('/notebook/save-lines/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify({
+            images: images
+        })
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('Lines saved successfully:', result);
+    return result;
+}
+
+// Function to extract text from saved line images
+async function extractTextFromLines() {
+    if (!lastConversionData) {
+        convertStatus.textContent = " | Please convert lines first!";
+        setTimeout(() => convertStatus.textContent = "", 3000);
+        return;
+    }
+    
+    convertStatus.textContent = " | Extracting text...";
+    extractTextBtn.disabled = true;
+    
+    try {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                         document.querySelector('meta[name=csrf-token]')?.getAttribute('content');
+        
+        const response = await fetch('/notebook/extract-text/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify(lastConversionData)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+        
+        // Get the text file blob
+        const blob = await response.blob();
+        
+        // Create download link
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `extracted_text_${lastConversionData.timestamp}_${lastConversionData.session_id}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        convertStatus.textContent = " | Text extracted and downloaded successfully!";
+        
+    } catch (error) {
+        console.error('Error extracting text:', error);
+        convertStatus.textContent = ` | Text extraction failed: ${error.message}`;
+    } finally {
+        extractTextBtn.disabled = false;
+        // Clear status after 5 seconds
+        setTimeout(() => {
+            convertStatus.textContent = "";
+        }, 5000);
+    }
+    return result;
+}
+    </script>
+</body>
+</html>
