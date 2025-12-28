@@ -1,0 +1,965 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Page Notebook Canvas Drawing Tool</title>
+    <link rel="stylesheet" type="text/css" href="{% static 'notebook/style.css' %}">
+    <style>
+        canvas {
+            touch-action: none;
+        }
+        .page-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        
+        .page-nav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .page-btn {
+            padding: 8px 12px;
+            border: 1px solid #007bff;
+            background: #007bff;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .page-btn:hover:not(:disabled) {
+            background: #0056b3;
+        }
+        
+        .page-btn:disabled {
+            background: #ccc;
+            border-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .page-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .page-input {
+            width: 60px;
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .page-thumbnails {
+            display: flex;
+            gap: 10px;
+            padding: 10px 0;
+            overflow-x: auto;
+            border-top: 1px solid #ddd;
+            margin-top: 10px;
+        }
+        
+        .page-thumbnail {
+            flex-shrink: 0;
+            width: 80px;
+            height: 100px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            background: white;
+        }
+        
+        .page-thumbnail.active {
+            border-color: #007bff;
+            box-shadow: 0 0 5px rgba(0, 123, 255, 0.5);
+        }
+        
+        .page-thumbnail canvas {
+            width: 100%;
+            height: 100%;
+            border-radius: 2px;
+        }
+        
+        .page-number {
+            position: absolute;
+            bottom: 2px;
+            left: 2px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            font-size: 10px;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        
+        .delete-page {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            font-size: 10px;
+            cursor: pointer;
+            display: none;
+        }
+        
+        .page-thumbnail:hover .delete-page {
+            display: block;
+        }
+        
+        .book-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .book-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .book-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .export-all-btn {
+            background: #28a745;
+            color: white;
+            border: 1px solid #28a745;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .export-all-btn:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    {% csrf_token %}
+    
+    <div class="book-info">
+        <h2 class="book-title">Multi-Page Notebook</h2>
+        <div class="book-actions">
+            <button id="export-all-btn" class="export-all-btn">Export All Pages</button>
+            <a href="/notebook/" class="export-all-btn" id="back_home">Back to Home</a>
+        </div>
+    </div>
+    
+    <div class="page-controls">
+        <div class="page-nav">
+            <button id="prev-page" class="page-btn">← Prev</button>
+            <div class="page-info">
+                Page <input type="number" id="current-page-input" class="page-input" value="1" min="1"> 
+                of <span id="total-pages">1</span>
+            </div>
+            <button id="next-page" class="page-btn">Next →</button>
+        </div>
+        
+        <div class="page-actions">
+            <button id="add-page" class="page-btn">+ Add Page</button>
+            <button id="duplicate-page" class="page-btn">Duplicate</button>
+            <button id="delete-page" class="page-btn" style="background: #dc3545; border-color: #dc3545;">Delete Page</button>
+        </div>
+    </div>
+    
+    <div class="toolbar">
+        <button id="pen-tool" class="tool-btn active">Pen</button>
+        <button id="eraser-tool" class="tool-btn">Eraser</button>
+        <button id="clear-btn" class="tool-btn">Clear Page</button>
+        <button id="download-btn" class="tool-btn">Download Page</button>
+        <button id="undo-btn" class="tool-btn">Undo</button>
+        <button id="convert-btn" class="tool-btn">Convert Page</button>
+        <button id="extract-text-btn" class="tool-btn" disabled>Extract Text</button>
+        
+        <div class="tool-options">
+            <label>
+                Color:
+                <input type="color" id="pen-color" value="#000000">
+            </label>
+            <label>
+                Size:
+                <input type="range" id="pen-size" min="1" max="20" value="2">
+                <span id="size-display">2px</span>
+            </label>
+        </div>
+    </div>
+    
+    <div class="canvas-container">
+        <canvas id="background-canvas"></canvas>
+        <canvas id="drawing-canvas"></canvas>
+    </div>
+    
+    <div class="page-thumbnails" id="page-thumbnails">
+        <!-- Thumbnails will be generated here -->
+    </div>
+    
+    <div class="status-bar">
+        <span id="tool-status">Current tool: Pen</span>
+        <span> | Press Ctrl+Z for undo</span>
+        <span id="convert-status"></span>
+    </div>
+
+    <script>
+
+const urlParams = new URLSearchParams(window.location.search);
+const bookId = urlParams.get('book'); // ?book=my-book
+// Canvas setup
+const drawingCanvas = document.getElementById('drawing-canvas');
+const backgroundCanvas = document.getElementById('background-canvas');
+const drawingCtx = drawingCanvas.getContext('2d');
+const bgCtx = backgroundCanvas.getContext('2d');
+const backgroundCtx = backgroundCanvas.getContext('2d');
+
+// Set canvas dimensions (A4 size at 72 DPI)
+const canvasWidth = 595;
+const canvasHeight = 842;
+drawingCanvas.width = canvasWidth;
+drawingCanvas.height = canvasHeight;
+backgroundCanvas.width = canvasWidth;
+backgroundCanvas.height = canvasHeight;
+
+// Tool elements
+const penTool = document.getElementById('pen-tool');
+const eraserTool = document.getElementById('eraser-tool');
+const clearBtn = document.getElementById('clear-btn');
+const downloadBtn = document.getElementById('download-btn');
+const undoBtn = document.getElementById('undo-btn');
+const convertBtn = document.getElementById('convert-btn');
+const extractTextBtn = document.getElementById('extract-text-btn');
+const penColor = document.getElementById('pen-color');
+const penSize = document.getElementById('pen-size');
+const sizeDisplay = document.getElementById('size-display');
+const toolStatus = document.getElementById('tool-status');
+const convertStatus = document.getElementById('convert-status');
+
+// Page control elements
+const prevPageBtn = document.getElementById('prev-page');
+const nextPageBtn = document.getElementById('next-page');
+const addPageBtn = document.getElementById('add-page');
+const duplicatePageBtn = document.getElementById('duplicate-page');
+const deletePageBtn = document.getElementById('delete-page');
+const currentPageInput = document.getElementById('current-page-input');
+const totalPagesSpan = document.getElementById('total-pages');
+const pageThumbnailsContainer = document.getElementById('page-thumbnails');
+const exportAllBtn = document.getElementById('export-all-btn');
+
+// Multi-page state
+let pages = [];
+let currentPageIndex = 0;
+let pageHistory = []; // History for each page
+
+// Drawing state
+let isDrawing = false;
+let currentTool = 'pen';
+let lastX = 0;
+let lastY = 0;
+const lineSpacing = 25;
+let lastConversionData = null;
+
+async function initializeNotebook() {
+    if (!bookId) {
+        alert("Missing book ID in URL!");
+        return;
+    }
+
+    const response = await fetch(`/api/book/${bookId}/`);
+    const book = await response.json();
+    
+    if (!book.pages || book.pages.length === 0) {
+        // Start with page 1 if none exist
+        pages.push({ id: 1, drawingData: null, history: [], currentStep: -1 });
+    } else {
+        for (const pageId of book.pages) {
+            const img = new Image();
+            img.src = `/media/book_storage/${bookId}/page-${pageId}.png`;
+
+            await new Promise(resolve => {
+                img.onload = () => {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = canvasWidth;
+                    tempCanvas.height = canvasHeight;
+                    const tempCtx = tempCanvas.getContext('2d');
+
+                    // Draw image to temp canvas and extract image data
+                    tempCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+                    tempCtx.drawImage(img, 0, 0);
+                    const drawingData = tempCtx.getImageData(0, 0, canvasWidth, canvasHeight);
+
+                    pages.push({
+                        id: pageId,
+                        drawingData: drawingData,
+                        history: [],
+                        currentStep: -1
+                    });
+
+                    resolve();
+                };
+                img.onerror = () => {
+                    console.warn(`Page image not found: page-${pageId}.png`);
+                    pages.push({
+                        id: pageId,
+                        drawingData: null,
+                        history: [],
+                        currentStep: -1
+                    });
+                    resolve();
+                };
+            });
+        }
+    }
+
+    // Setup canvas layers
+    setupNotebookBackground();      // ← draw notebook lines on background canvas
+    switchToPage(0);                // ← restore drawing from loaded page
+    updatePageControls();
+    updateThumbnails();
+}
+
+
+// Draw notebook lines background
+function setupNotebookBackground() {
+    backgroundCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    backgroundCtx.fillStyle = "#fff";
+    backgroundCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    backgroundCtx.strokeStyle = "#ddd";
+
+    for (let y = lineSpacing; y < canvasHeight; y += lineSpacing) {
+        backgroundCtx.beginPath();
+        backgroundCtx.moveTo(0, y);
+        backgroundCtx.lineTo(canvasWidth, y);
+        backgroundCtx.stroke();
+    }
+}
+
+// Page management functions
+function addNewPage() {
+    const newPageId = Math.max(...pages.map(p => p.id)) + 1;
+    pages.push({
+        id: newPageId,
+        drawingData: null,
+        history: [],
+        currentStep: -1
+    });
+    
+    // Switch to new page
+    switchToPage(pages.length - 1);
+    updatePageControls();
+    updateThumbnails();
+}
+
+function duplicatePage() {
+    const currentPage = pages[currentPageIndex];
+    const newPageId = Math.max(...pages.map(p => p.id)) + 1;
+    
+    // Create a copy of current page's drawing data
+    const duplicatedData = currentPage.drawingData ? 
+        drawingCtx.createImageData(currentPage.drawingData) : null;
+    
+    const newPage = {
+        id: newPageId,
+        drawingData: duplicatedData,
+        history: [],
+        currentStep: -1
+    };
+    
+    pages.splice(currentPageIndex + 1, 0, newPage);
+    switchToPage(currentPageIndex + 1);
+    updatePageControls();
+    updateThumbnails();
+}
+
+async function deletePage() {
+    const page = pages[currentPageIndex];
+    if (!page) return;
+
+    const confirmDelete = confirm(`Delete page ${page.id}? This cannot be undone.`);
+    if (!confirmDelete) return;
+
+    const response = await fetch(`/api/book/${bookId}/page/${page.id}/delete/`, {
+        method: 'DELETE',
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+        // Remove from frontend memory
+        pages.splice(currentPageIndex, 1);
+
+        if (pages.length === 0) {
+            pages.push({ id: 1, drawingData: null, history: [], currentStep: -1 });
+        }
+
+        // Go to first page or previous
+        currentPageIndex = Math.min(currentPageIndex, pages.length - 1);
+
+        loadCurrentPageDrawing();
+        updatePageControls();
+        updateThumbnails();
+
+        alert(`Page ${result.page_id} deleted.`);
+    } else {
+        alert(`Error: ${result.error || "Failed to delete page"}`);
+    }
+}
+
+function switchToPage(pageIndex) {
+    if (pageIndex < 0 || pageIndex >= pages.length) return;
+    
+    // Save current page state before switching
+    saveCurrentPageDrawing();
+    
+    // Switch to new page
+    currentPageIndex = pageIndex;
+    loadCurrentPageDrawing();
+    updatePageControls();
+    updateThumbnails();
+}
+
+async function saveCurrentPageDrawing() {
+    if (pages[currentPageIndex]) {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(backgroundCanvas, 0, 0);
+        ctx.drawImage(drawingCanvas, 0, 0);
+
+        const dataURL = canvas.toDataURL("image/png");
+
+        await fetch(`/api/book/${bookId}/save-page/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+            },
+            body: JSON.stringify({
+                page_id: pages[currentPageIndex].id,
+                image_data: dataURL
+            })
+        });
+
+        pages[currentPageIndex].drawingData = drawingCtx.getImageData(0, 0, canvasWidth, canvasHeight);
+    }
+}
+
+function loadCurrentPageDrawing() {
+    // Clear canvas
+    drawingCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Load page data if it exists
+    const currentPage = pages[currentPageIndex];
+    if (currentPage && currentPage.drawingData) {
+        drawingCtx.putImageData(currentPage.drawingData, 0, 0);
+    }
+}
+
+function saveCurrentPageState() {
+    const currentPage = pages[currentPageIndex];
+    if (!currentPage) return;
+    
+    // If we're not at the end of the history, remove everything after current step
+    if (currentPage.currentStep < currentPage.history.length - 1) {
+        currentPage.history = currentPage.history.slice(0, currentPage.currentStep + 1);
+    }
+    
+    // Save current state
+    currentPage.history.push(drawingCtx.getImageData(0, 0, canvasWidth, canvasHeight));
+    currentPage.currentStep = currentPage.history.length - 1;
+    
+    // Also save to page data
+    saveCurrentPageDrawing();
+}
+
+function undoCurrentPage() {
+    const currentPage = pages[currentPageIndex];
+    if (!currentPage) return;
+    
+    if (currentPage.currentStep > 0) {
+        currentPage.currentStep--;
+        drawingCtx.putImageData(currentPage.history[currentPage.currentStep], 0, 0);
+        saveCurrentPageDrawing();
+    } else if (currentPage.currentStep === 0) {
+        drawingCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+        saveCurrentPageDrawing();
+    }
+    updateThumbnails();
+}
+
+function updatePageControls() {
+    currentPageInput.value = currentPageIndex + 1;
+    totalPagesSpan.textContent = pages.length;
+    
+    prevPageBtn.disabled = currentPageIndex === 0;
+    nextPageBtn.disabled = currentPageIndex === pages.length - 1;
+    deletePageBtn.disabled = pages.length <= 1;
+}
+
+function updateThumbnails() {
+    pageThumbnailsContainer.innerHTML = '';
+    
+    pages.forEach((page, index) => {
+        const thumbnailDiv = document.createElement('div');
+        thumbnailDiv.className = `page-thumbnail ${index === currentPageIndex ? 'active' : ''}`;
+        
+        const thumbnailCanvas = document.createElement('canvas');
+        thumbnailCanvas.width = 80;
+        thumbnailCanvas.height = 100;
+        const thumbnailCtx = thumbnailCanvas.getContext('2d');
+        
+        // Draw background
+        thumbnailCtx.fillStyle = 'white';
+        thumbnailCtx.fillRect(0, 0, 80, 100);
+        
+        // Draw simplified notebook lines
+        thumbnailCtx.strokeStyle = '#a0c0e8';
+        thumbnailCtx.lineWidth = 0.5;
+        for (let y = 3; y < 100; y += 3) {
+            thumbnailCtx.beginPath();
+            thumbnailCtx.moveTo(0, y);
+            thumbnailCtx.lineTo(80, y);
+            thumbnailCtx.stroke();
+        }
+        
+        // Draw margin
+        thumbnailCtx.strokeStyle = '#ff9999';
+        thumbnailCtx.beginPath();
+        thumbnailCtx.moveTo(6, 0);
+        thumbnailCtx.lineTo(6, 100);
+        thumbnailCtx.stroke();
+        
+        // Draw page content if exists
+        if (page.drawingData) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvasWidth;
+            tempCanvas.height = canvasHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(page.drawingData, 0, 0);
+            
+            thumbnailCtx.drawImage(tempCanvas, 0, 0, 80, 100);
+        }
+        
+        const pageNumber = document.createElement('div');
+        pageNumber.className = 'page-number';
+        pageNumber.textContent = index + 1;
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-page';
+        deleteBtn.innerHTML = '×';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (pages.length > 1) {
+                pages.splice(index, 1);
+                if (currentPageIndex >= index && currentPageIndex > 0) {
+                    currentPageIndex--;
+                }
+                if (currentPageIndex >= pages.length) {
+                    currentPageIndex = pages.length - 1;
+                }
+                switchToPage(currentPageIndex);
+                updatePageControls();
+                updateThumbnails();
+            }
+        };
+        
+        thumbnailDiv.appendChild(thumbnailCanvas);
+        thumbnailDiv.appendChild(pageNumber);
+        if (pages.length > 1) {
+            thumbnailDiv.appendChild(deleteBtn);
+        }
+        
+        thumbnailDiv.onclick = () => switchToPage(index);
+        pageThumbnailsContainer.appendChild(thumbnailDiv);
+    });
+}
+
+// Event listeners for drawing
+drawingCanvas.addEventListener('mousedown', startDrawing);
+drawingCanvas.addEventListener('mousemove', draw);
+drawingCanvas.addEventListener('mouseup', stopDrawing);
+drawingCanvas.addEventListener('mouseout', stopDrawing);
+
+// Page control event listeners
+prevPageBtn.addEventListener('click', () => {
+    if (currentPageIndex > 0) {
+        switchToPage(currentPageIndex - 1);
+    }
+});
+
+nextPageBtn.addEventListener('click', () => {
+    if (currentPageIndex < pages.length - 1) {
+        switchToPage(currentPageIndex + 1);
+    }
+});
+
+addPageBtn.addEventListener('click', addNewPage);
+duplicatePageBtn.addEventListener('click', duplicatePage);
+deletePageBtn.addEventListener('click', deletePage);
+
+currentPageInput.addEventListener('change', (e) => {
+    const pageNum = parseInt(e.target.value);
+    if (pageNum >= 1 && pageNum <= pages.length) {
+        switchToPage(pageNum - 1);
+    } else {
+        e.target.value = currentPageIndex + 1;
+    }
+});
+
+exportAllBtn.addEventListener('click', exportAllPages);
+
+// Tool selection
+penTool.addEventListener('click', () => {
+    setActiveTool('pen');
+});
+
+eraserTool.addEventListener('click', () => {
+    setActiveTool('eraser');
+});
+
+clearBtn.addEventListener('click', clearCurrentPage);
+downloadBtn.addEventListener('click', downloadCurrentPage);
+undoBtn.addEventListener('click', undoCurrentPage);
+convertBtn.addEventListener('click', convertAllPagesLines);
+extractTextBtn.addEventListener('click', extractTextFromLines);
+
+// Tool options
+penSize.addEventListener('input', () => {
+    sizeDisplay.textContent = `${penSize.value}px`;
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undoCurrentPage();
+    } else if (e.key === 'ArrowLeft' && e.ctrlKey) {
+        e.preventDefault();
+        if (currentPageIndex > 0) switchToPage(currentPageIndex - 1);
+    } else if (e.key === 'ArrowRight' && e.ctrlKey) {
+        e.preventDefault();
+        if (currentPageIndex < pages.length - 1) switchToPage(currentPageIndex + 1);
+    }
+});
+
+// Drawing functions (unchanged from original)
+function startDrawing(e) {
+    isDrawing = true;
+    [lastX, lastY] = getMousePos(drawingCanvas, e);
+    
+    drawingCtx.beginPath();
+    drawingCtx.moveTo(lastX, lastY);
+    drawingCtx.lineTo(lastX, lastY);
+    drawingCtx.stroke();
+}
+
+function draw(e) {
+    if (!isDrawing) return;
+    
+    const [currentX, currentY] = getMousePos(drawingCanvas, e);
+    
+    drawingCtx.beginPath();
+    drawingCtx.moveTo(lastX, lastY);
+    drawingCtx.lineTo(currentX, currentY);
+    
+    if (currentTool === 'pen') {
+    drawingCtx.globalCompositeOperation = 'source-over';
+    drawingCtx.strokeStyle = penColor.value;
+    drawingCtx.lineWidth = parseInt(penSize.value);
+    } else if (currentTool === 'eraser') {
+        drawingCtx.globalCompositeOperation = 'destination-out';
+        drawingCtx.lineWidth = parseInt(penSize.value) * 2;
+    }
+
+    drawingCtx.stroke();
+    drawingCtx.globalCompositeOperation = 'source-over'; // Reset
+    
+    lastX = currentX;
+    lastY = currentY;
+}
+
+function stopDrawing() {
+    if (isDrawing) {
+        isDrawing = false;
+        saveCurrentPageState();
+        updateThumbnails();
+    }
+}
+
+function getMousePos(canvas, evt) {
+    const rect = canvas.getBoundingClientRect();
+    return [
+        evt.clientX - rect.left,
+        evt.clientY - rect.top
+    ];
+}
+
+function setActiveTool(tool) {
+    currentTool = tool;
+    
+    penTool.classList.toggle('active', tool === 'pen');
+    eraserTool.classList.toggle('active', tool === 'eraser');
+    
+    toolStatus.textContent = `Current tool: ${tool.charAt(0).toUpperCase() + tool.slice(1)}`;
+}
+
+function clearCurrentPage() {
+    drawingCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+    saveCurrentPageState();
+    updateThumbnails();
+}
+
+function downloadCurrentPage() {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvasWidth;
+    tempCanvas.height = canvasHeight;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    
+    tempCtx.drawImage(drawingCanvas, 0, 0);
+    
+    const link = document.createElement('a');
+    link.download = `notebook-page-${currentPageIndex + 1}.png`;
+    link.href = tempCanvas.toDataURL('image/png');
+    link.click();
+}
+
+function exportAllPages() {
+    const zip = new JSZip();
+    
+    pages.forEach((page, index) => {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvasWidth;
+        tempCanvas.height = canvasHeight;
+        const tempCtx = tempCanvas.getContext('2d');        
+        // Draw page content
+        if (page.drawingData) {
+            tempCtx.putImageData(page.drawingData, 0, 0);
+        }
+        
+        const dataURL = tempCanvas.toDataURL('image/png');
+        const base64Data = dataURL.split(',')[1];
+        zip.file(`page-${index + 1}.png`, base64Data, {base64: true});
+    });
+    
+    zip.generateAsync({type: "blob"}).then(function(content) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "notebook-all-pages.zip";
+        link.click();
+    });
+}
+
+// Convert and extract functions (adapted for current page)
+async function convertAllPagesLines() {
+    saveCurrentPageDrawing();
+    convertStatus.textContent = " | Converting all pages...";
+    convertBtn.disabled = true;
+
+    try {
+        const targetHeight = 100;
+        const allImages = [];
+
+        for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+            const page = pages[pageIndex];
+            if (!page || !page.drawingData) continue;
+
+            // Prepare a temporary canvas to work with drawingData
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvasWidth;
+            tempCanvas.height = canvasHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(page.drawingData, 0, 0);
+
+            const numberOfLines = Math.floor(canvasHeight / lineSpacing);
+
+            for (let i = 0; i < numberOfLines; i++) {
+                const yStart = i * lineSpacing;
+
+                const lineCanvas = document.createElement('canvas');
+                lineCanvas.width = canvasWidth;
+                lineCanvas.height = lineSpacing;
+                const lineCtx = lineCanvas.getContext('2d');
+
+                lineCtx.fillStyle = 'white';
+                lineCtx.fillRect(0, 0, canvasWidth, lineSpacing);
+
+                const lineImageData = tempCtx.getImageData(0, yStart, canvasWidth, lineSpacing);
+                lineCtx.putImageData(lineImageData, 0, 0);
+
+                // Scale
+                const aspectRatio = canvasWidth / lineSpacing;
+                const targetWidth = Math.round(targetHeight * aspectRatio);
+
+                const scaledCanvas = document.createElement('canvas');
+                scaledCanvas.width = targetWidth;
+                scaledCanvas.height = targetHeight;
+                const scaledCtx = scaledCanvas.getContext('2d');
+
+                scaledCtx.fillStyle = 'white';
+                scaledCtx.fillRect(0, 0, targetWidth, targetHeight);
+                scaledCtx.drawImage(lineCanvas, 0, 0, targetWidth, targetHeight);
+
+                const dataURL = scaledCanvas.toDataURL('image/png');
+
+                allImages.push({
+                    lineNumber: allImages.length + 1,  // sequential across all pages
+                    dataURL: dataURL
+                });
+            }
+        }
+
+        const result = await saveLinesToServer(allImages);
+
+        lastConversionData = {
+            session_id: result.session_id,
+            timestamp: result.timestamp,
+            page_count: pages.length
+        };
+
+        extractTextBtn.disabled = false;
+        convertStatus.textContent = ` | All pages converted!`;
+
+    } catch (error) {
+        console.error('Error converting all pages:', error);
+        convertStatus.textContent = " | Conversion failed!";
+    } finally {
+        convertBtn.disabled = false;
+        setTimeout(() => {
+            convertStatus.textContent = "";
+        }, 3000);
+    }
+}
+
+
+// Backend communication functions (unchanged)
+async function saveLinesToServer(images) {
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                     document.querySelector('meta[name=csrf-token]')?.getAttribute('content');
+    
+    const response = await fetch('/notebook/save-lines/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify({
+            images: images
+        })
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('Lines saved successfully:', result);
+    return result;
+}
+
+async function extractTextFromLines() {
+    if (!lastConversionData) {
+        convertStatus.textContent = " | Please convert page lines first!";
+        setTimeout(() => convertStatus.textContent = "", 3000);
+        return;
+    }
+    
+    convertStatus.textContent = " | Extracting text...";
+    extractTextBtn.disabled = true;
+    
+    try {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                         document.querySelector('meta[name=csrf-token]')?.getAttribute('content');
+        
+        const response = await fetch('/notebook/extract-text/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify(lastConversionData)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `extracted_text_page_${lastConversionData.page_number}_${lastConversionData.timestamp}_${lastConversionData.session_id}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        convertStatus.textContent = " | Text extracted and downloaded successfully!";
+        
+    } catch (error) {
+        console.error('Error extracting text:', error);
+        convertStatus.textContent = ` | Text extraction failed: ${error.message}`;
+    } finally {
+        extractTextBtn.disabled = false;
+        setTimeout(() => {
+            convertStatus.textContent = "";
+        }, 5000);
+    }
+        drawingCanvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const simulatedEvent = new MouseEvent('mousedown', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+        });
+        drawingCanvas.dispatchEvent(simulatedEvent);
+    }, { passive: false });
+
+    drawingCanvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const simulatedEvent = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+        });
+        drawingCanvas.dispatchEvent(simulatedEvent);
+    }, { passive: false });
+
+    drawingCanvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const simulatedEvent = new MouseEvent('mouseup', {});
+        drawingCanvas.dispatchEvent(simulatedEvent);
+    }, { passive: false });
+}
+
+// Initialize the notebook
+initializeNotebook();
+    </script>
+</body>
+</html>
